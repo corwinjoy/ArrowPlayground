@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="PublishConfigData" remoteFilesAllowedToDisappearOnAutoupload="false">
+    <serverData>
+      <paths name="Remote Host (d4d12039-84f2-485a-aaa4-16eae8e9b1cb)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/tmp/ColumnReadingPerf" local="$PROJECT_DIR$/ColumnReadingPerf" />
+          </mappings>
+        </serverdata>
+      </paths>
+    </serverData>
+  </component>
+</project>

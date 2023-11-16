@@ -9,28 +9,34 @@ ENV PYARROW_WITH_PARQUET=1 \
 # Install necessary dependencies
 RUN apt-get update && \
     apt-get install -y \
+    autoconf \
+    automake \
+    binutils \
     build-essential \
-    ninja-build \
+    clang \
     cmake \
+    dos2unix \
+    g++ \
+    gcc \
+    gdb \
     git \
-	wget \
-	nano \
-	mc \
-	htop \
-	ninja-build \
-	net-tools \
-	gdb \
-	iputils-ping \
-	strace \
-	binutils \
-	linux-tools-generic \
-	valgrind \
-	ninja-build \
-	build-essential \
-	net-tools \
-	gdb \	
-	python3-dev \
-	python3-dbg \
+    htop \
+    iputils-ping \
+    libtool \
+    linux-tools-generic \
+    locales-all \
+    make \
+    mc \
+    nano \
+    net-tools \
+    ninja-build \
+    python3-dbg \
+    python3-dev \
+    rsync \
+    strace \
+    tar \
+    valgrind \
+    wget \
 #Clean apt cache
 	&& apt-get clean \
 	&& rm -rf /var/lib/apt/lists/* \
@@ -120,6 +126,11 @@ RUN git clone https://github.com/adamreeve/parquet-inspect.git && \
     cd parquet-inspect && \
 	python -m build  && \
 	pip install --editable .
+	
+# Add a builder user to handle file sharing in Linux
+ARG UID=1000
+RUN useradd -m -u ${UID} -s /bin/bash builder
+USER builder
 
 # Command to keep the container running
 CMD ["bash"]

@@ -18,8 +18,8 @@ using arrow::Status;
 
 namespace
 {
-  const char *FILE_NAME = "/mnt/ramfs/my.parquet";
-  // const char *FILE_NAME = "/tmp/my.parquet";
+  // const char *FILE_NAME = "/mnt/ramfs/my.parquet";
+  const char *FILE_NAME = "/tmp/my.parquet";
 
   std::shared_ptr<arrow::Table> GetTable(size_t nColumns, size_t nRows)
   {
