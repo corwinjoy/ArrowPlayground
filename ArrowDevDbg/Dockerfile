@@ -126,11 +126,20 @@ RUN git clone https://github.com/adamreeve/parquet-inspect.git && \
     cd parquet-inspect && \
 	python -m build  && \
 	pip install --editable .
+
+# Allow perf to run as non-root
+RUN apt-get update
+RUN apt-get install -y linux-tools-6.2.0-36-generic
+RUN echo kernel.perf_event_paranoid=-1 >> /etc/sysctl.conf
+RUN echo kernel.kptr_restrict=0 >> /etc/sysctl.conf
+RUN sysctl --system
 	
 # Add a builder user to handle file sharing in Linux
 ARG UID=1000
 RUN useradd -m -u ${UID} -s /bin/bash builder
 USER builder
+
+USER 0
 
 # Command to keep the container running
 CMD ["bash"]

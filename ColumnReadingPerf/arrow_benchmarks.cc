@@ -19,7 +19,8 @@ using arrow::Status;
 namespace
 {
   // const char *FILE_NAME = "/mnt/ramfs/my.parquet";
-  const char *FILE_NAME = "/tmp/my.parquet";
+  // const char *FILE_NAME = "/tmp/my.parquet";
+  const char *FILE_NAME = "/tmp/ColumnReadingPerf/cmake-build-debug-docker_dbarrow/my.parquet";
 
   std::shared_ptr<arrow::Table> GetTable(size_t nColumns, size_t nRows)
   {
@@ -70,8 +71,10 @@ namespace
     return Status::OK();
   }
 
-  Status ReadColumnsAsTableExternalMetadata(const std::string &filename, std::vector<int> indicies, std::chrono::microseconds *dt, std::chrono::microseconds *dt1, std::chrono::microseconds *dt2)
+  Status ReadColumnsAsTableExternalMetadata(const std::string &filename, std::vector<int> indicies, std::chrono::microseconds *tm_tot,
+                                            std::chrono::microseconds *tm_builder, std::chrono::microseconds *tm_reader)
   {
+
     std::shared_ptr<arrow::io::ReadableFile> infile;
     ARROW_ASSIGN_OR_RAISE(infile, arrow::io::ReadableFile::Open(filename));
     auto metadata = parquet::ReadMetaData(infile);
@@ -84,7 +87,7 @@ namespace
     // reader->init();
     auto end = std::chrono::steady_clock::now();
 
-    *dt1 = std::chrono::duration_cast<std::chrono::microseconds>(end - begin);
+    *tm_builder = std::chrono::duration_cast<std::chrono::microseconds>(end - begin);
 
     begin = std::chrono::steady_clock::now();
     std::shared_ptr<arrow::Table> parquet_table;
@@ -92,8 +95,8 @@ namespace
     ARROW_RETURN_NOT_OK(reader->get()->ReadTable(indicies, &parquet_table));
 
     end = std::chrono::steady_clock::now();
-    *dt2 = std::chrono::duration_cast<std::chrono::microseconds>(end - begin);
-    *dt = *dt1 + *dt2;
+    *tm_reader = std::chrono::duration_cast<std::chrono::microseconds>(end - begin);
+    *tm_tot = *tm_builder + *tm_reader;
     return Status::OK();
   }
 
@@ -103,9 +106,15 @@ namespace
     csvFile.open("arrow_results.csv", std::ios_base::out); // append instead of overwrite
     csvFile << "name,columns,rows,row_groups,data_page_size,columns_to_read,reading(μs),reading_p1(μs),reading_p2(μs)" << std::endl;
 
+    /*
     std::vector<int> nColumns = {1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000};
     std::vector<int64_t> chunk_sizes = {10000, 100000};
     std::vector<int> rows_list = {10000, 50000};
+     */
+
+    std::vector<int> nColumns = {10000};
+    std::vector<int64_t> chunk_sizes = {10000};
+    std::vector<int> rows_list = {10000};
 
     std::vector<int> indicies(100);
     std::iota(indicies.begin(), indicies.end(), 0);
@@ -118,33 +127,30 @@ namespace
         {
           std::chrono::microseconds writing_dt;
 
-          // if (!std::filesystem::exists(FILE_NAME))
-          ARROW_RETURN_NOT_OK(WriteTableToParquet(nColumn, nRow, FILE_NAME, &writing_dt, chunk_size));
+          if (!std::filesystem::exists(FILE_NAME))
+            ARROW_RETURN_NOT_OK(WriteTableToParquet(nColumn, nRow, FILE_NAME, &writing_dt, chunk_size));
 
           const int repeats = 3;
-          //const int repeats = 3000;
-          std::vector<std::chrono::microseconds> reading_100_dts(repeats);
-          std::vector<std::chrono::microseconds> reading_100_dts1(repeats);
-          std::vector<std::chrono::microseconds> reading_100_dts2(repeats);
+          std::vector<std::chrono::microseconds> tm_tots(repeats);
+          std::vector<std::chrono::microseconds> tm_builders(repeats);
+          std::vector<std::chrono::microseconds> tm_readers(repeats);
           for (int i = 0; i < repeats; i++)
           {
             // ARROW_RETURN_NOT_OK(ReadEntireTable(FILE_NAME, &reading_all_dts[i]));
-            ARROW_RETURN_NOT_OK(ReadColumnsAsTableExternalMetadata(FILE_NAME, indicies, &reading_100_dts[i], &reading_100_dts1[i], &reading_100_dts2[i]));
+            ARROW_RETURN_NOT_OK(ReadColumnsAsTableExternalMetadata(FILE_NAME, indicies, &tm_tots[i],
+                                                                   &tm_builders[i], &tm_readers[i]));
           }
 
-          auto reading_100_dt = *std::min_element(reading_100_dts.begin(), reading_100_dts.end());
-          auto reading_100_dt1 = *std::min_element(reading_100_dts1.begin(), reading_100_dts1.end());
-          auto reading_100_dt2 = *std::min_element(reading_100_dts2.begin(), reading_100_dts2.end());
+          auto tm_tot = *std::min_element(tm_tots.begin(), tm_tots.end());
+          auto tm_builder = *std::min_element(tm_builders.begin(), tm_builders.end());
+          auto tm_reader = *std::min_element(tm_readers.begin(), tm_readers.end());
 
           std::cerr << "(" << nColumn << ", " << nRow << ")"
                     << ", chunk_size=" << chunk_size
                     << ", writing_dt=" << writing_dt.count() / nColumn
-                    << ", reading_100_dt=" << reading_100_dt.count()
-                    // << ", reading_100_dt=" << reading_100_dt.count() / 100
-                    // << ", reading_100_dt1=" << reading_100_dt1.count() / 100
-                    << ", reading_100_dt1=" << reading_100_dt1.count()
-                    // << ", reading_100_dt2=" << reading_100_dt2.count() / 100
-                    << ", reading_100_dt2=" << reading_100_dt2.count()
+                    << ", time_total=" << tm_tot.count()
+                    << ", time_builder=" << tm_builder.count()
+                    << ", time_reader=" << tm_reader.count()
                     << std::endl;
 
           csvFile << "cpp_fast_with_external_metadata"
@@ -154,9 +160,9 @@ namespace
                   << chunk_size << ","
                   << 1024 * 1024 * 1024 << ","
                   << 100 << ","
-                  << reading_100_dt.count() << ","
-                  << reading_100_dt1.count() << ","
-                  << reading_100_dt2.count()
+                  << tm_tot.count() << ","
+                  << tm_builder.count() << ","
+                  << tm_reader.count()
                   << std::endl;
         }
       }
