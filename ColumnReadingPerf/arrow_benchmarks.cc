@@ -28,9 +28,6 @@ namespace
   std::shared_ptr<arrow::Table> GetTable(size_t nColumns, size_t nRows)
   {
     std::random_device dev;
-    std::default_random_engine rng(dev());
-    std::uniform_real_distribution<> rand_gen(0.0, 1.0);
-
     std::vector<std::shared_ptr<arrow::Array>> arrays;
     std::vector<std::shared_ptr<arrow::Field>> fields;
 
@@ -38,9 +35,9 @@ namespace
     for (int i = 0; i < nColumns; i++)
     {
       arrow::FloatBuilder builder;
-      for (auto j = 0; j < nRows; j++)
+      for (int j = 0; j < nRows; j++)
       {
-        if (!builder.Append(rand_gen(rng)).ok())
+        if (!builder.Append(static_cast<float>(j)).ok())
           throw std::runtime_error("builder.Append");
       }
 
@@ -85,14 +82,16 @@ namespace
     auto metadata = parquet::ReadMetaData(infile);
     // PrintSchema(metadata->schema()->schema_root().get(), std::cout);
 
+    int row_group = 1;
+    std::vector<int> row_groups = {row_group};
+    auto single_row_metadata = metadata.get()->Subset(row_groups);
+
     auto begin = std::chrono::steady_clock::now();
     auto readerProperties = parquet::default_reader_properties();
     parquet::arrow::FileReaderBuilder fileReaderBuilder;
-    ARROW_RETURN_NOT_OK(fileReaderBuilder.OpenFile(filename, false, readerProperties, metadata));
+    ARROW_RETURN_NOT_OK(fileReaderBuilder.OpenFile(filename, false, readerProperties, single_row_metadata));
     auto reader = fileReaderBuilder.Build();
-    // reader->init();
     auto end = std::chrono::steady_clock::now();
-
 
     *tm_builder = std::chrono::duration_cast<std::chrono::microseconds>(end - begin);
 
@@ -100,48 +99,171 @@ namespace
     std::shared_ptr<arrow::Table> parquet_table;
     // Read the table.
     ARROW_RETURN_NOT_OK(reader->get()->ReadTable(indicies, &parquet_table));
-
     end = std::chrono::steady_clock::now();
+
+    std::cout << parquet_table->ToString() << std::endl;
+
     *tm_reader = std::chrono::duration_cast<std::chrono::microseconds>(end - begin);
     *tm_tot = *tm_builder + *tm_reader;
     return Status::OK();
   }
 
-  Status ReadPageIndexes(const std::string &filename) {
-    /*
-    std::shared_ptr<arrow::io::ReadableFile> infile;
-    ARROW_ASSIGN_OR_RAISE(infile, arrow::io::ReadableFile::Open(filename));
-    auto metadata = parquet::ReadMetaData(infile);
-     */
+typedef std::vector<std::shared_ptr<parquet::OffsetIndex>> offsets;
 
-    auto read_properties = parquet::default_reader_properties();
-    auto reader = parquet::ParquetFileReader::OpenFile(filename, false, read_properties);
+std::vector<offsets> ReadPageIndexes(const std::string &filename) {
+  auto read_properties = parquet::default_reader_properties();
+  auto reader = parquet::ParquetFileReader::OpenFile(filename, false, read_properties);
+  auto metadata = reader->metadata();
+  std::shared_ptr<parquet::PageIndexReader> page_index_reader = reader->GetPageIndexReader();
 
-    auto metadata = reader->metadata();
+  std::vector<offsets> rowgroup_offsets;
+  for (int rg = 0; rg < metadata->num_row_groups(); ++rg) {
+    std::shared_ptr<parquet::RowGroupPageIndexReader> row_group_index_reader = page_index_reader->RowGroup(rg);
+    auto row_group_reader = reader->RowGroup(rg);
+    offsets offset_indexes;
+    for (int col = 0; col < metadata->num_columns(); ++col) {
+      auto column_index = row_group_index_reader->GetColumnIndex(col);
+      auto offset_index = row_group_index_reader->GetOffsetIndex(col);
+      offset_indexes.push_back(offset_index);
+    }
+    rowgroup_offsets.push_back(offset_indexes);
+  }
+  return rowgroup_offsets;
+}
 
-    // ASSERT_EQ(expect_num_row_groups, metadata->num_row_groups());
+Status ReadAndPrintMetadataRow(const std::string &filename, std::vector<int> indicies,
+                               std::shared_ptr<parquet::FileMetaData> metadata) {
+  auto readerProperties = parquet::default_reader_properties();
+  parquet::arrow::FileReaderBuilder fileReaderBuilder;
+  ARROW_RETURN_NOT_OK(fileReaderBuilder.OpenFile(filename, false, readerProperties, metadata));
+  auto reader = fileReaderBuilder.Build();
 
-    std::shared_ptr<parquet::PageIndexReader> page_index_reader = reader->GetPageIndexReader();
-    assert(page_index_reader != nullptr);
+  // Read and print the table.
+  std::shared_ptr<arrow::Table> parquet_table;
+  ARROW_RETURN_NOT_OK(reader->get()->ReadTable(indicies, &parquet_table));
+  std::cout << parquet_table->ToString() << std::endl;
+}
 
-    page_index_reader->WillNeed({0}, {},
-                                {true, true});
+Status ReadColumnsUsingOffsetIndex(const std::string &filename, std::vector<int> indicies)
+{
+  auto rowgroup_offsets = ReadPageIndexes(filename);
+  std::shared_ptr<arrow::io::ReadableFile> infile;
+  ARROW_ASSIGN_OR_RAISE(infile, arrow::io::ReadableFile::Open(filename));
+  auto metadata = parquet::ReadMetaData(infile);
+  // PrintSchema(metadata->schema()->schema_root().get(), std::cout);
 
-    // PageIndexReaderParam{{0}, {}, {true, true}}
+  int row_group = 1;
+  std::vector<int> row_groups = {row_group};
+  auto row_0_metadata = metadata->Subset({0});
+  auto target_metadata = metadata->Subset({row_group});
+  auto shifted_metadata = row_0_metadata->Subset({0}); // make a copy
 
-    for (int rg = 0; rg < metadata->num_row_groups(); ++rg) {
-      std::shared_ptr<parquet::RowGroupPageIndexReader> row_group_index_reader = page_index_reader->RowGroup(rg);
-      assert(row_group_index_reader !=nullptr);
+  auto target_rowgroup_offsets = rowgroup_offsets[row_group];
+  shifted_metadata->SetOffsets(target_rowgroup_offsets);
 
-      auto row_group_reader = reader->RowGroup(rg);
-      assert(row_group_reader != nullptr);
+  ReadAndPrintMetadataRow(filename, indicies, target_metadata);
+  ReadAndPrintMetadataRow(filename, indicies, shifted_metadata);
 
-      for (int col = 0; col < metadata->num_columns(); ++col) {
-        auto column_index = row_group_index_reader->GetColumnIndex(col);
-        auto offset_index = row_group_index_reader->GetOffsetIndex(col);
-      }
+
+  return Status::OK();
+}
+
+
+// Examples from ArrowDevDbg/src/arrow/cpp/examples/parquet/parquet_arrow/reader_writer.cc
+
+// #3: Read only a single RowGroup of the parquet file
+void read_single_rowgroup() {
+  std::cout << "Reading first RowGroup of parquet-arrow-example.parquet" << std::endl;
+  std::shared_ptr<arrow::io::ReadableFile> infile;
+  PARQUET_ASSIGN_OR_THROW(infile,
+                          arrow::io::ReadableFile::Open("parquet-arrow-example.parquet",
+                                                        arrow::default_memory_pool()));
+
+  std::unique_ptr<parquet::arrow::FileReader> reader;
+  PARQUET_THROW_NOT_OK(
+          parquet::arrow::OpenFile(infile, arrow::default_memory_pool(), &reader));
+  std::shared_ptr<arrow::Table> table;
+  PARQUET_THROW_NOT_OK(reader->RowGroup(0)->ReadTable(&table));
+  std::cout << "Loaded " << table->num_rows() << " rows in " << table->num_columns()
+            << " columns." << std::endl;
+}
+
+// #4: Read only a single column of the whole parquet file
+void read_single_column() {
+  std::cout << "Reading first column of parquet-arrow-example.parquet" << std::endl;
+  std::shared_ptr<arrow::io::ReadableFile> infile;
+  PARQUET_ASSIGN_OR_THROW(infile,
+                          arrow::io::ReadableFile::Open("parquet-arrow-example.parquet",
+                                                        arrow::default_memory_pool()));
+
+  std::unique_ptr<parquet::arrow::FileReader> reader;
+  PARQUET_THROW_NOT_OK(
+          parquet::arrow::OpenFile(infile, arrow::default_memory_pool(), &reader));
+  std::shared_ptr<arrow::ChunkedArray> array;
+  PARQUET_THROW_NOT_OK(reader->ReadColumn(0, &array));
+  PARQUET_THROW_NOT_OK(arrow::PrettyPrint(*array, 4, &std::cout));
+  std::cout << std::endl;
+}
+
+// #5: Read only a single column of a RowGroup (this is known as ColumnChunk)
+//     from the Parquet file.
+void read_single_column_chunk() {
+  std::cout << "Reading first ColumnChunk of the first RowGroup of "
+               "parquet-arrow-example.parquet"
+            << std::endl;
+  std::shared_ptr<arrow::io::ReadableFile> infile;
+  PARQUET_ASSIGN_OR_THROW(infile,
+                          arrow::io::ReadableFile::Open("parquet-arrow-example.parquet",
+                                                        arrow::default_memory_pool()));
+
+  std::unique_ptr<parquet::arrow::FileReader> reader;
+  PARQUET_THROW_NOT_OK(
+          parquet::arrow::OpenFile(infile, arrow::default_memory_pool(), &reader));
+  std::shared_ptr<arrow::ChunkedArray> array;
+  PARQUET_THROW_NOT_OK(reader->RowGroup(0)->Column(0)->Read(&array));
+  PARQUET_THROW_NOT_OK(arrow::PrettyPrint(*array, 4, &std::cout));
+  std::cout << std::endl;
+}
+
+/*
+// Code to roundtrip an OffsetIndex
+
+TEST(PageIndex, WriteOffsetIndex) {
+  /// Create offset index via the OffsetIndexBuilder interface.
+  auto builder = OffsetIndexBuilder::Make();
+  const size_t num_pages = 5;
+  const std::vector<int64_t> offsets = {100, 200, 300, 400, 500};
+  const std::vector<int32_t> page_sizes = {1024, 2048, 3072, 4096, 8192};
+  const std::vector<int64_t> first_row_indices = {0, 10000, 20000, 30000, 40000};
+  for (size_t i = 0; i < num_pages; ++i) {
+    builder->AddPage(offsets[i], page_sizes[i], first_row_indices[i]);
+  }
+  const int64_t final_position = 4096;
+  builder->Finish(final_position);
+
+  std::vector<std::unique_ptr<OffsetIndex>> offset_indexes;
+  /// 1st element is the offset index just built.
+  offset_indexes.emplace_back(builder->Build());
+  /// 2nd element is the offset index restored by serialize-then-deserialize round trip.
+  auto sink = CreateOutputStream();
+  builder->WriteTo(sink.get());
+  PARQUET_ASSIGN_OR_THROW(auto buffer, sink->Finish());
+  offset_indexes.emplace_back(OffsetIndex::Make(buffer->data(),
+                                                static_cast<uint32_t>(buffer->size()),
+                                                default_reader_properties()));
+
+  /// Verify the data of the offset index.
+  for (const auto& offset_index : offset_indexes) {
+    ASSERT_EQ(num_pages, offset_index->page_locations().size());
+    for (size_t i = 0; i < num_pages; ++i) {
+      const auto& page_location = offset_index->page_locations().at(i);
+      ASSERT_EQ(offsets[i] + final_position, page_location.offset);
+      ASSERT_EQ(page_sizes[i], page_location.compressed_page_size);
+      ASSERT_EQ(first_row_indices[i], page_location.first_row_index);
     }
   }
+}
+ */
 
 /*
 
@@ -269,11 +391,11 @@ TEST(PageIndex, DeterminePageIndexRangesInRowGroup) {
     std::vector<int> rows_list = {10000, 50000};
      */
 
-    std::vector<int> nColumns = {10000};
-    std::vector<int64_t> chunk_sizes = {1000};
-    std::vector<int> rows_list = {10000};
+    std::vector<int> nColumns = {10};
+    std::vector<int64_t> chunk_sizes = {10};
+    std::vector<int> rows_list = {100};
 
-    std::vector<int> indicies(100);
+    std::vector<int> indicies(nColumns[0]/2);
     std::iota(indicies.begin(), indicies.end(), 0);
 
     for (auto chunk_size : chunk_sizes)
@@ -284,11 +406,11 @@ TEST(PageIndex, DeterminePageIndexRangesInRowGroup) {
         {
           std::chrono::microseconds writing_dt;
 
-          if (!std::filesystem::exists(FILE_NAME))
+          if (true || !std::filesystem::exists(FILE_NAME))
             ARROW_RETURN_NOT_OK(WriteTableToParquet(nColumn, nRow, FILE_NAME, &writing_dt, chunk_size));
 
-          ARROW_RETURN_NOT_OK(ReadPageIndexes(FILE_NAME));
-          const int repeats = 3;
+          // ARROW_RETURN_NOT_OK(ReadPageIndexes(FILE_NAME));
+          const int repeats = 1;
           std::vector<std::chrono::microseconds> tm_tots(repeats);
           std::vector<std::chrono::microseconds> tm_builders(repeats);
           std::vector<std::chrono::microseconds> tm_readers(repeats);
