@@ -141,7 +141,12 @@ Status ReadAndPrintMetadataRow(const std::string &filename, std::vector<int> ind
   // Read and print the table.
   std::shared_ptr<arrow::Table> parquet_table;
   ARROW_RETURN_NOT_OK(reader->get()->ReadTable(indicies, &parquet_table));
+  std::cout << std::endl;
+  std::cout << "****************************************************************************************" << std::endl;
   std::cout << parquet_table->ToString() << std::endl;
+  std::cout << "****************************************************************************************" << std::endl;
+
+  return Status::OK();
 }
 
 Status ReadColumnsUsingOffsetIndex(const std::string &filename, std::vector<int> indicies)
@@ -152,17 +157,24 @@ Status ReadColumnsUsingOffsetIndex(const std::string &filename, std::vector<int>
   auto metadata = parquet::ReadMetaData(infile);
   // PrintSchema(metadata->schema()->schema_root().get(), std::cout);
 
-  int row_group = 1;
+  int row_group = 9;
   std::vector<int> row_groups = {row_group};
   auto row_0_metadata = metadata->Subset({0});
   auto target_metadata = metadata->Subset({row_group});
-  auto shifted_metadata = row_0_metadata->Subset({0}); // make a copy
+  auto shifted_metadata = metadata->Subset({9}); // make a copy
 
   auto target_column_offsets = rowgroup_offsets[row_group];
-  shifted_metadata->SetOffsets(target_column_offsets);
+  int64_t total_rows = metadata->num_rows();
+  int64_t chunk_rows = row_0_metadata->num_rows();
+  int64_t num_values = chunk_rows;
+  if (row_group >= total_rows/chunk_rows) {
+    // last page, set num_values to remainder
+    num_values = total_rows % chunk_rows;
+  }
+  shifted_metadata->set_column_offsets(target_column_offsets, num_values);
 
-  ReadAndPrintMetadataRow(filename, indicies, target_metadata);
-  ReadAndPrintMetadataRow(filename, indicies, shifted_metadata);
+  ARROW_RETURN_NOT_OK(ReadAndPrintMetadataRow(filename, indicies, target_metadata));
+  ARROW_RETURN_NOT_OK(ReadAndPrintMetadataRow(filename, indicies, shifted_metadata));
 
 
   return Status::OK();
@@ -393,7 +405,7 @@ TEST(PageIndex, DeterminePageIndexRangesInRowGroup) {
 
     std::vector<int> nColumns = {10};
     std::vector<int64_t> chunk_sizes = {10};
-    std::vector<int> rows_list = {100};
+    std::vector<int> rows_list = {95};
 
     std::vector<int> indicies(nColumns[0]/2);
     std::iota(indicies.begin(), indicies.end(), 0);
@@ -416,10 +428,13 @@ TEST(PageIndex, DeterminePageIndexRangesInRowGroup) {
           std::vector<std::chrono::microseconds> tm_readers(repeats);
           for (int i = 0; i < repeats; i++)
           {
-            // ARROW_RETURN_NOT_OK(ReadEntireTable(FILE_NAME, &reading_all_dts[i]));
+            ARROW_RETURN_NOT_OK(ReadColumnsUsingOffsetIndex(FILE_NAME, indicies));
+            /*
             ARROW_RETURN_NOT_OK(ReadColumnsAsTableExternalMetadata(FILE_NAME, indicies, &tm_tots[i],
                                                                    &tm_builders[i], &tm_readers[i]));
+            */
           }
+
 
           auto tm_tot = *std::min_element(tm_tots.begin(), tm_tots.end());
           auto tm_builder = *std::min_element(tm_builders.begin(), tm_builders.end());
