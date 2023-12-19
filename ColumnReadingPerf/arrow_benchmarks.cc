@@ -161,7 +161,7 @@ Status ReadColumnsUsingOffsetIndex(const std::string &filename, std::vector<int>
   std::vector<int> row_groups = {row_group};
   auto row_0_metadata = metadata->Subset({0});
   auto target_metadata = metadata->Subset({row_group});
-  auto shifted_metadata = metadata->Subset({9}); // make a copy
+  auto shifted_metadata = metadata->Subset({0}); // make a copy
 
   auto target_column_offsets = rowgroup_offsets[row_group];
   int64_t total_rows = metadata->num_rows();
@@ -173,7 +173,9 @@ Status ReadColumnsUsingOffsetIndex(const std::string &filename, std::vector<int>
   }
   shifted_metadata->set_column_offsets(target_column_offsets, num_values);
 
+  std::cout << "Correct read:";
   ARROW_RETURN_NOT_OK(ReadAndPrintMetadataRow(filename, indicies, target_metadata));
+  std::cout << "\n\nOffset based read:";
   ARROW_RETURN_NOT_OK(ReadAndPrintMetadataRow(filename, indicies, shifted_metadata));
 
 
