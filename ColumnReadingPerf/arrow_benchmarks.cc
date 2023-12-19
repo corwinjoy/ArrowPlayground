@@ -70,7 +70,7 @@ namespace
     auto properties = builder
                           .enable_write_page_index()
                           ->max_row_group_length(chunkSize)
-                          // ->disable_dictionary()
+                          ->disable_dictionary()
                           // ->disable_statistics()
                           ->build();
     PARQUET_THROW_NOT_OK(parquet::arrow::WriteTable(*table, arrow::default_memory_pool(), outfile, chunkSize, properties));
@@ -163,7 +163,7 @@ Status ReadColumnsUsingOffsetIndex(const std::string &filename, std::vector<int>
   auto metadata = parquet::ReadMetaData(infile);
   // PrintSchema(metadata->schema()->schema_root().get(), std::cout);
 
-  int row_group = 6;
+  int row_group = 9;
   std::vector<int> row_groups = {row_group};
   auto row_0_metadata = metadata->Subset({0});
   auto target_metadata = metadata->Subset({row_group});
