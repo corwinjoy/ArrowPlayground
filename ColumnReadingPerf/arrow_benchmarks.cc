@@ -35,10 +35,16 @@ namespace
     for (int i = 0; i < nColumns; i++)
     {
       arrow::FloatBuilder builder;
+
       for (int j = 0; j < nRows; j++)
       {
-        if (!builder.Append(static_cast<float>(j)).ok())
-          throw std::runtime_error("builder.Append");
+        int reps = j / 10;
+        if (j % 10 < reps) {
+          float val = (j / 10) * 10;
+          builder.Append(val);
+        } else {
+          builder.Append(static_cast<float>(j));
+        }
       }
 
       std::shared_ptr<arrow::Array> array;
@@ -157,7 +163,7 @@ Status ReadColumnsUsingOffsetIndex(const std::string &filename, std::vector<int>
   auto metadata = parquet::ReadMetaData(infile);
   // PrintSchema(metadata->schema()->schema_root().get(), std::cout);
 
-  int row_group = 9;
+  int row_group = 6;
   std::vector<int> row_groups = {row_group};
   auto row_0_metadata = metadata->Subset({0});
   auto target_metadata = metadata->Subset({row_group});

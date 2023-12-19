@@ -9,8 +9,9 @@ export PYARROW_WITH_PARQUET=1 \
     
 # Clone the specified Arrow repository and checkout the desired branch
 cd $SRCDIR
-git clone https://github.com/apache/arrow.git 
+git clone git@github.com:corwinjoy/arrow.git
 cd arrow 
+git checkout offset_reader
 
 # Build Arrow C++
 cd $SRCDIR/arrow/cpp
